@@ -284,47 +284,59 @@ parseDirectory = do
   createDirectory <- getNarEffect Nar.narCreateDir
   target          <- currentFile
   lift $ createDirectory target
-  parseEntryOrFinish target
+  names <- newIORef HashMap.empty
+  parseEntryOrFinish names
 
- where
 
-  parseEntryOrFinish :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> NarParser m ()
-  parseEntryOrFinish path =
-    -- If we reach a ")", we finished the directory's entries, and we have
-    -- to put ")" back into the stream, because the outer call to @parens@
-    -- expects to consume it.
-    -- Otherwise, parse an entry as a fresh file system object
-    matchStr
-      [ ( ")"   , pushStr ")" )
-      , ("entry", parseEntry path  )
-      ]
+-- parseEntryOrFinish :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> NarParser m ()
+parseEntryOrFinish names =
+  -- If we reach a ")", we finished the directory's entries, and we have
+  -- to put ")" back into the stream, because the outer call to @parens@
+  -- expects to consume it.
+  -- Otherwise, parse an entry as a fresh file system object
+  matchStr
+    [ ( ")"   , pushStr ")" )
+    , ("entry", parseEntry  )
+    ]
 
-  parseEntry :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> NarParser m ()
-  parseEntry path = do
+  where
+
+  -- parseEntry :: (IO.MonadIO m, Fail.MonadFail m) => NarParser m ()
+  parseEntry = do
     opts <- getNarOptions
     parens $ do
       expectStr "name"
       fName <-
         if Nar.useCaseHack opts then
-          addCaseHack path =<< parseStr
+          addCaseHack =<< parseStr
         else
           parseStr
       pushFileName (toString fName)
       expectStr "node"
       parens parseFSO
       popFileName
-    parseEntryOrFinish path
+    parseEntryOrFinish names
 
-  addCaseHack :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> Text -> NarParser m Text
-  addCaseHack path fName = do
-    let key = Text.pack path <> "/" <> fName
-    recordFileName key
-    conflictCount <- getFileNameConflictCount key
+  addCaseHack :: (IO.MonadIO m, Fail.MonadFail m) => Text -> NarParser m Text
+  addCaseHack fName = do
+    recordFileName fName
+    conflictCount <- getFileNameConflictCount fName
     pure $
       if conflictCount > 0 then
         fName <> Nar.caseHackSuffix <> show conflictCount
       else
         fName
+
+  -- | Add a file name to the collection of encountered file names
+  recordFileName :: (IO.MonadIO m, Fail.MonadFail m) => Text -> NarParser m ()
+  recordFileName fName =
+    IO.liftIO $ modifyIORef' names $ HashMap.insertWith (\_ v -> v + 1) (CI.mk fName) 0
+
+  getFileNameConflictCount :: (IO.MonadIO m, Fail.MonadFail m) => Text -> NarParser m Int
+  getFileNameConflictCount fName = do
+    fileMap <- IO.liftIO $ readIORef names
+    pure $ HashMap.findWithDefault 0 (CI.mk fName) fileMap
+
 
 
 
@@ -523,16 +535,6 @@ currentFile = do
 pushLink :: Monad m => LinkInfo -> NarParser m ()
 pushLink linkInfo = State.modify (\s -> s { links = linkInfo : links s })
 
-
--- | Add a file name to the collection of encountered file names
-recordFileName :: Monad m => Text -> NarParser m ()
-recordFileName fName =
-  State.modify (\s -> s { fileNames = HashMap.insertWith (\_ v -> v + 1) (CI.mk fName) 0 (fileNames s) })
-
-getFileNameConflictCount :: Monad m => Text -> NarParser m Int
-getFileNameConflictCount fName = do
-  fileMap <- State.gets fileNames
-  pure $ HashMap.findWithDefault 0 (CI.mk fName) fileMap
 
 ------------------------------------------------------------------------------
 -- * Utilities
