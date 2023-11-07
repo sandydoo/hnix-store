@@ -284,41 +284,42 @@ parseDirectory = do
   createDirectory <- getNarEffect Nar.narCreateDir
   target          <- currentFile
   lift $ createDirectory target
-  parseEntryOrFinish
+  parseEntryOrFinish target
 
  where
 
-  parseEntryOrFinish :: (IO.MonadIO m, Fail.MonadFail m) => NarParser m ()
-  parseEntryOrFinish =
+  parseEntryOrFinish :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> NarParser m ()
+  parseEntryOrFinish path =
     -- If we reach a ")", we finished the directory's entries, and we have
     -- to put ")" back into the stream, because the outer call to @parens@
     -- expects to consume it.
     -- Otherwise, parse an entry as a fresh file system object
     matchStr
       [ ( ")"   , pushStr ")" )
-      , ("entry", parseEntry  )
+      , ("entry", parseEntry path  )
       ]
 
-  parseEntry :: (IO.MonadIO m, Fail.MonadFail m) => NarParser m ()
-  parseEntry = do
+  parseEntry :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> NarParser m ()
+  parseEntry path = do
     opts <- getNarOptions
     parens $ do
       expectStr "name"
       fName <-
         if Nar.useCaseHack opts then
-          addCaseHack =<< parseStr
+          addCaseHack path =<< parseStr
         else
           parseStr
       pushFileName (toString fName)
       expectStr "node"
       parens parseFSO
       popFileName
-    parseEntryOrFinish
+    parseEntryOrFinish path
 
-  addCaseHack :: (IO.MonadIO m, Fail.MonadFail m) => Text -> NarParser m Text
-  addCaseHack fName = do
-    recordFileName fName
-    conflictCount <- getFileNameConflictCount fName
+  addCaseHack :: (IO.MonadIO m, Fail.MonadFail m) => FilePath -> Text -> NarParser m Text
+  addCaseHack path fName = do
+    let key = Text.pack path <> "/" <> fName
+    recordFileName key
+    conflictCount <- getFileNameConflictCount key
     pure $
       if conflictCount > 0 then
         fName <> Nar.caseHackSuffix <> show conflictCount
