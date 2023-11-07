@@ -8,8 +8,9 @@ module System.Nix.Internal.Nar.Options
 
 data NarOptions = NarOptions {
   useCaseHack :: Bool
-  -- ^ Whether to use the case hack to support case-insensitive filesystems.
-  -- Enabled by default on Darwin (macOS).
+  -- ^ Whether to use a case hack to support case-insensitive filesystems.
+  -- The case hack rewrites file names to avoid collisions on case-insensitive file systems, e.g. APFS and HFS+ on macOS.
+  -- Enabled by default on macOS (Darwin).
 }
 
 defaultNarOptions :: NarOptions

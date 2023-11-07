@@ -159,7 +159,7 @@ data ParserState = ParserState
     --   from the NAR on
   , fileNames      :: HashMap.HashMap (CI.CI Text) Int
     -- ^ A map of case-insensitive files names to the number of collisions encountered.
-    -- Used to avoid collisions on case-insensitive file systems, ie. macOS.
+    -- See 'NarOptions.useCaseHack' for details.
   }
 
 
@@ -314,6 +314,7 @@ parseDirectory = do
       popFileName
     parseEntryOrFinish
 
+  addCaseHack :: (IO.MonadIO m, Fail.MonadFail m) => Text -> NarParser m Text
   addCaseHack fName = do
     recordFileName fName
     conflictCount <- getFileNameConflictCount fName
