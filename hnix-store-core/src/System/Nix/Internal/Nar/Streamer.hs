@@ -1,5 +1,6 @@
 -- | Stream out a NAR file from a regular file
 
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module System.Nix.Internal.Nar.Streamer
@@ -16,7 +17,11 @@ import qualified Data.ByteString                 as Bytes
 import qualified Data.ByteString.Char8           as Bytes.Char8
 import qualified Data.ByteString.Lazy            as Bytes.Lazy
 import qualified Data.Serialize                  as Serial
+#ifdef darwin_HOST_OS
+import qualified Data.Text                       as T (pack, breakOnEnd)
+#else
 import qualified Data.Text                       as T (pack)
+#endif
 import qualified Data.Text.Encoding              as TE (encodeUtf8)
 import qualified System.Directory                as Directory
 import           System.FilePath                 ((</>))
@@ -77,7 +82,7 @@ streamNarIO effs basePath yield = do
             yield $ str "entry"
             parens $ do
               let fullName = path </> f
-              yield $ strs ["name", filePathToBS f, "node"]
+              yield $ strs ["name", filePathToBSWithCaseHack f, "node"]
               parens $ go fullName
         else do
           isExec <- IO.liftIO $ isExecutable effs path
@@ -89,8 +94,6 @@ streamNarIO effs basePath yield = do
           -- Read, yield, and pad the file
           mapM_ yield . Bytes.Lazy.toChunks =<< IO.liftIO (Nar.narReadFile effs path)
           yield $ Bytes.replicate (padLen $ fromIntegral fSize) 0
-
-  filePathToBS = TE.encodeUtf8 . T.pack
 
   parens act = do
     yield $ str "("
@@ -127,3 +130,19 @@ padBS strSize bs = bs <> Bytes.replicate (padLen strSize) 0
 
 strs :: [ByteString] -> ByteString
 strs xs = Bytes.concat $ str <$> xs
+
+filePathToBS :: FilePath -> ByteString
+filePathToBS = TE.encodeUtf8 . T.pack
+
+filePathToBSWithCaseHack :: FilePath -> ByteString
+#ifdef darwin_HOST_OS
+filePathToBSWithCaseHack = TE.encodeUtf8 . undoCaseHack . T.pack
+
+caseHackSuffix :: Text
+caseHackSuffix = "~nix~case~hack~"
+
+undoCaseHack :: Text -> Text
+undoCaseHack = snd . T.breakOnEnd caseHackSuffix
+#else
+filePathToBSWithCaseHack = filePathToBS
+#endif
