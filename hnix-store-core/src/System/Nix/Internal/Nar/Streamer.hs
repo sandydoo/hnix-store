@@ -16,7 +16,7 @@ import qualified Data.ByteString                 as Bytes
 import qualified Data.ByteString.Char8           as Bytes.Char8
 import qualified Data.ByteString.Lazy            as Bytes.Lazy
 import qualified Data.Serialize                  as Serial
-import qualified Data.Text                       as T (pack)
+import qualified Data.Text                       as T (pack, breakOnEnd)
 import qualified Data.Text.Encoding              as TE (encodeUtf8)
 import qualified System.Directory                as Directory
 import           System.FilePath                 ((</>))
@@ -88,7 +88,11 @@ streamNarIO effs basePath yield = do
           yield $ int fSize
           yieldFile path fSize
 
-  filePathToBS = TE.encodeUtf8 . T.pack
+  caseHackSuffix = "~nix~case~hack~"
+
+  undoCaseHack = snd . T.breakOnEnd caseHackSuffix
+
+  filePathToBS = TE.encodeUtf8 . undoCaseHack . T.pack
 
   parens act = do
     yield $ str "("
