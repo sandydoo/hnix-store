@@ -55,6 +55,7 @@ library
     , base16-bytestring
     , base64-bytestring
     , bytestring
+    , case-insensitive
     , cereal
     , containers
     -- Required for cryptonite low-level type convertion

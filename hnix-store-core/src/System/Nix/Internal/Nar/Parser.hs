@@ -26,6 +26,7 @@ import qualified Control.Monad.State             as State
 import qualified Control.Monad.Trans             as Trans
 import qualified Control.Monad.Trans.Control     as Base
 import qualified Data.ByteString                 as Bytes
+import qualified Data.CaseInsensitive            as CI
 import qualified Data.HashMap.Strict             as HashMap
 import qualified Data.List                       as List
 import qualified Data.Map                        as Map
@@ -128,8 +129,8 @@ data ParserState = ParserState
   , links          :: [LinkInfo]
     -- ^ Unlike with files and directories, we collect symlinks
     --   from the NAR on
-  , fileNames      :: HashMap.HashMap Text Int
-    -- ^ A case-insensitive map of files names to the number of collisions encountered.
+  , fileNames      :: HashMap.HashMap (CI.CI Text) Int
+    -- ^ A map of case-insensitive files names to the number of collisions encountered.
     -- Used to avoid collisions on case-insensitive file systems, ie. macOS.
   }
 
@@ -281,18 +282,17 @@ parseDirectory = do
     parseEntryOrFinish
 
   addCaseHack fName = do
-  #ifdef darwin_HOST_OS
-    let key = Text.toLower fName
-    recordFileName key
-    conflictCount <- getFileNameConflictCount key
+#ifdef darwin_HOST_OS
+    recordFileName fName
+    conflictCount <- getFileNameConflictCount fName
     pure $
       if conflictCount > 0 then
-        fName <> "~nix~case~hack~" <> show numConflicts
+        fName <> "~nix~case~hack~" <> show conflictCount
       else
         fName
-  #else
+#else
     pure fName
-  #endif
+#endif
 
 
 
@@ -495,12 +495,12 @@ pushLink linkInfo = State.modify (\s -> s { links = linkInfo : links s })
 -- | Add a file name to the collection of encountered file names
 recordFileName :: Monad m => Text -> NarParser m ()
 recordFileName fName =
-  State.modify (\s -> s { fileNames = HashMap.insertWith (+) fName 0 (fileNames s) })
+  State.modify (\s -> s { fileNames = HashMap.insertWith (+) (CI.mk fName) 0 (fileNames s) })
 
 getFileNameConflictCount :: Monad m => Text -> NarParser m Int
 getFileNameConflictCount fName = do
   fileMap <- State.gets fileNames
-  pure $ HashMap.findWithDefault 0 fName fileMap
+  pure $ HashMap.findWithDefault 0 (CI.mk fName) fileMap
 
 ------------------------------------------------------------------------------
 -- * Utilities
