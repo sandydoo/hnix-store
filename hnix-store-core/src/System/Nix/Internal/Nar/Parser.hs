@@ -93,6 +93,7 @@ runParser
   -> m (Either String a)
 runParser effs parser h target = do
   runParserWithOptions Nar.defaultNarOptions effs parser h target
+
 runParserWithOptions
   :: forall m a
    . (IO.MonadIO m, Base.MonadBaseControl IO m)
@@ -525,7 +526,7 @@ pushLink linkInfo = State.modify (\s -> s { links = linkInfo : links s })
 -- | Add a file name to the collection of encountered file names
 recordFileName :: Monad m => Text -> NarParser m ()
 recordFileName fName =
-  State.modify (\s -> s { fileNames = HashMap.insertWith (+) (CI.mk fName) 0 (fileNames s) })
+  State.modify (\s -> s { fileNames = HashMap.insertWith (\_ v -> v + 1) (CI.mk fName) 0 (fileNames s) })
 
 getFileNameConflictCount :: Monad m => Text -> NarParser m Int
 getFileNameConflictCount fName = do
