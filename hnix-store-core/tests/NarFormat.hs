@@ -128,6 +128,9 @@ unit_nixStoreDirectory = filesystemNixStore "directory" (Nar sampleDirectory)
 unit_nixStoreDirectory' :: HU.Assertion
 unit_nixStoreDirectory' = filesystemNixStore "directory'" (Nar sampleDirectory')
 
+unit_nixStoreDirectoryWithCaseConflicts :: HU.Assertion
+unit_nixStoreDirectoryWithCaseConflicts = filesystemNixStore "directory'" (Nar sampleDirectoryWithCaseConflicts)
+
 test_nixStoreBigFile :: TestTree
 test_nixStoreBigFile = packThenExtract "bigfile" $ \baseDir -> do
   mkBigFile (baseDir </> "bigfile")
@@ -428,6 +431,17 @@ sampleDirectory' = Directory $ Map.fromList [
       , (FilePathPart "tofoo"  , SymLink "../foo/foo.txt")
       ])
   ]
+
+sampleDirectoryWithCaseConflicts :: FileSystemObject
+sampleDirectoryWithCaseConflicts = Directory $ Map.fromList [
+
+    (FilePathPart "foo", Directory $ Map.fromList [
+        (FilePathPart "foo.txt", Regular Nar.NonExecutable 8 "foo text")
+      , (FilePathPart "Foo.txt", Regular Nar.NonExecutable 8 "Foo text")
+      , (FilePathPart "FoO.txt", Regular Nar.NonExecutable 8 "FoO text")
+      ])
+  ]
+
 
 sampleLargeFile :: Int64 -> FileSystemObject
 sampleLargeFile fSize =
