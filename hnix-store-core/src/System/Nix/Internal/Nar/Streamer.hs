@@ -86,7 +86,9 @@ streamNarIO effs basePath yield = do
           fSize <- IO.liftIO $ Nar.narFileSize effs path
           yield $ str "contents"
           yield $ int fSize
-          yieldFile path fSize
+          -- Read, yield, and pad the file
+          mapM_ yield . Bytes.Lazy.toChunks =<< IO.liftIO (Nar.narReadFile effs path)
+          yield $ Bytes.replicate (padLen $ fromIntegral fSize) 0
 
   filePathToBS = TE.encodeUtf8 . T.pack
 
@@ -95,12 +97,6 @@ streamNarIO effs basePath yield = do
     r <- act
     yield $ str ")"
     pure r
-
-  -- Read, yield, and pad the file
-  yieldFile :: FilePath -> Int64 -> m ()
-  yieldFile path fsize = do
-    mapM_ yield . Bytes.Lazy.toChunks =<< IO.liftIO (Bytes.Lazy.readFile path)
-    yield $ Bytes.replicate (padLen $ fromIntegral fsize) 0
 
 data IsExecutable = NonExecutable | Executable
   deriving (Eq, Show)
