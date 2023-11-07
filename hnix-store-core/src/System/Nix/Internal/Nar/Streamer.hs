@@ -1,5 +1,6 @@
 -- | Stream out a NAR file from a regular file
 
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module System.Nix.Internal.Nar.Streamer
@@ -88,12 +89,6 @@ streamNarIO effs basePath yield = do
           yield $ int fSize
           yieldFile path fSize
 
-  caseHackSuffix = "~nix~case~hack~"
-
-  undoCaseHack = snd . T.breakOnEnd caseHackSuffix
-
-  filePathToBS = TE.encodeUtf8 . undoCaseHack . T.pack
-
   parens act = do
     yield $ str "("
     r <- act
@@ -135,3 +130,16 @@ padBS strSize bs = bs <> Bytes.replicate (padLen strSize) 0
 
 strs :: [ByteString] -> ByteString
 strs xs = Bytes.concat $ str <$> xs
+
+filePathToBS :: FilePath -> ByteString
+#ifdef darwin_HOST_OS
+filePathToBS = TE.encodeUtf8 . undoCaseHack . T.pack
+
+caseHackSuffix :: Text
+caseHackSuffix = "~nix~case~hack~"
+
+undoCaseHack :: Text -> Text
+undoCaseHack = snd . T.breakOnEnd caseHackSuffix
+#else
+filePathToBS = TE.encodeUtf8 . T.pack
+#endif
