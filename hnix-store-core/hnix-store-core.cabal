@@ -40,6 +40,7 @@ library
     , System.Nix.Internal.Nar.Parser
     , System.Nix.Internal.Nar.Streamer
     , System.Nix.Internal.Nar.Effects
+    , System.Nix.Internal.Nar.Options
     , System.Nix.Internal.Signature
     , System.Nix.Internal.StorePath
     , System.Nix.Nar

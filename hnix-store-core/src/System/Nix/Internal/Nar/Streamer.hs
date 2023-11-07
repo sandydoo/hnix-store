@@ -1,6 +1,5 @@
 -- | Stream out a NAR file from a regular file
 
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module System.Nix.Internal.Nar.Streamer
@@ -8,6 +7,7 @@ module System.Nix.Internal.Nar.Streamer
   , dumpString
   , dumpPath
   , streamNarIO
+  , streamNarIOWithOptions
   , IsExecutable(..)
   )
 where
@@ -17,16 +17,13 @@ import qualified Data.ByteString                 as Bytes
 import qualified Data.ByteString.Char8           as Bytes.Char8
 import qualified Data.ByteString.Lazy            as Bytes.Lazy
 import qualified Data.Serialize                  as Serial
-#ifdef darwin_HOST_OS
 import qualified Data.Text                       as T (pack, breakOnEnd)
-#else
-import qualified Data.Text                       as T (pack)
-#endif
 import qualified Data.Text.Encoding              as TE (encodeUtf8)
 import qualified System.Directory                as Directory
 import           System.FilePath                 ((</>))
 
 import qualified System.Nix.Internal.Nar.Effects as Nar
+import qualified System.Nix.Internal.Nar.Options as Nar
 
 
 -- | NarSource
@@ -62,7 +59,11 @@ dumpPath = streamNarIO Nar.narEffectsIO
 --   function from any streaming library, and repeatedly calls
 --   it while traversing the filesystem object to Nar encode
 streamNarIO :: forall m . IO.MonadIO m => Nar.NarEffects IO -> FilePath -> NarSource m
-streamNarIO effs basePath yield = do
+streamNarIO effs basePath yield =
+  streamNarIOWithOptions Nar.defaultNarOptions effs basePath yield
+
+streamNarIOWithOptions :: forall m . IO.MonadIO m => Nar.NarOptions -> Nar.NarEffects IO -> FilePath -> NarSource m
+streamNarIOWithOptions opts effs basePath yield = do
   yield $ str "nix-archive-1"
   parens $ go basePath
  where
@@ -82,7 +83,12 @@ streamNarIO effs basePath yield = do
             yield $ str "entry"
             parens $ do
               let fullName = path </> f
-              yield $ strs ["name", filePathToBSWithCaseHack f, "node"]
+              let serializedPath =
+                    if Nar.useCaseHack opts then
+                      filePathToBSWithCaseHack f
+                    else
+                      filePathToBS f
+              yield $ strs ["name", serializedPath, "node"]
               parens $ go fullName
         else do
           isExec <- IO.liftIO $ isExecutable effs path
@@ -135,14 +141,7 @@ filePathToBS :: FilePath -> ByteString
 filePathToBS = TE.encodeUtf8 . T.pack
 
 filePathToBSWithCaseHack :: FilePath -> ByteString
-#ifdef darwin_HOST_OS
 filePathToBSWithCaseHack = TE.encodeUtf8 . undoCaseHack . T.pack
 
-caseHackSuffix :: Text
-caseHackSuffix = "~nix~case~hack~"
-
 undoCaseHack :: Text -> Text
-undoCaseHack = snd . T.breakOnEnd caseHackSuffix
-#else
-filePathToBSWithCaseHack = filePathToBS
-#endif
+undoCaseHack = snd . T.breakOnEnd Nar.caseHackSuffix

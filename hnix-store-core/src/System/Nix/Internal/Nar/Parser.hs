@@ -1,6 +1,5 @@
 -- | A streaming parser for the NAR format
 
-{-# language CPP                        #-}
 {-# language GeneralizedNewtypeDeriving #-}
 {-# language ScopedTypeVariables        #-}
 {-# language TypeFamilies               #-}
@@ -8,6 +7,7 @@
 module System.Nix.Internal.Nar.Parser
   ( runParser
   , parseNar
+  , runParserWithOptions
   , testParser
   , testParser'
   )
@@ -37,6 +37,7 @@ import           System.FilePath                 as FilePath
 import qualified System.IO                       as IO
 
 import qualified System.Nix.Internal.Nar.Effects as Nar
+import qualified System.Nix.Internal.Nar.Options as Nar
 
 
 -- | NarParser is a monad for parsing a Nar file as a byte stream
@@ -50,18 +51,29 @@ newtype NarParser m a = NarParser
         ParserState
         (Except.ExceptT
           String
-          (Reader.ReaderT
-            (Nar.NarEffects m)
-            m
-          )
+          (Reader.ReaderT (ParserEnv m) m)
         )
         a
   }
   deriving ( Functor, Applicative, Monad, Fail.MonadFail
            , Trans.MonadIO, State.MonadState ParserState
            , Except.MonadError String
-           , Reader.MonadReader (Nar.NarEffects m)
+           , Reader.MonadReader (ParserEnv m)
            )
+
+data ParserEnv m = ParserEnv
+  { envNarEffects :: Nar.NarEffects m
+  , envNarOptions :: Nar.NarOptions
+  }
+
+getNarEffects :: Monad m => NarParser m (Nar.NarEffects m)
+getNarEffects = fmap envNarEffects ask
+
+getNarEffect :: Monad m => (Nar.NarEffects m -> a) -> NarParser m a
+getNarEffect eff = fmap eff getNarEffects
+
+getNarOptions :: Monad m => NarParser m Nar.NarOptions
+getNarOptions = fmap envNarOptions ask
 
 -- | Run a @NarParser@ over a byte stream
 --   This is suitable for testing the top-level NAR parser, or any of the
@@ -79,9 +91,25 @@ runParser
   -> FilePath
      -- ^ The root file system object to be created by the NAR
   -> m (Either String a)
-runParser effs (NarParser action) h target = do
+runParser effs parser h target = do
+  runParserWithOptions Nar.defaultNarOptions effs parser h target
+runParserWithOptions
+  :: forall m a
+   . (IO.MonadIO m, Base.MonadBaseControl IO m)
+  => Nar.NarOptions
+  -> Nar.NarEffects m
+     -- ^ Provide the effects set, usually @narEffectsIO@
+  -> NarParser m a
+     -- ^ A parser to run, such as @parseNar@
+  -> IO.Handle
+     -- ^ A handle the stream containg the NAR. It should already be
+     --   open and in @ReadMode@
+  -> FilePath
+     -- ^ The root file system object to be created by the NAR
+  -> m (Either String a)
+runParserWithOptions opts effs (NarParser action) h target = do
   unpackResult <-
-    runReaderT (runExceptT $ State.evalStateT action state0) effs
+    runReaderT (runExceptT $ State.evalStateT action state0) (ParserEnv effs opts)
       `Exception.Lifted.catch` exceptionHandler
   when (isLeft unpackResult) cleanup
   pure unpackResult
@@ -236,11 +264,11 @@ parseFile = do
           pure $ Just chunk
 
   target     <- currentFile
-  streamFile <- asks Nar.narStreamFile
+  streamFile <- getNarEffect Nar.narStreamFile
   lift (streamFile target getChunk)
 
   when (s == "executable") $ do
-    effs :: Nar.NarEffects m <- ask
+    effs :: Nar.NarEffects m <- getNarEffects
     lift $ do
       p <- Nar.narGetPerms effs target
       Nar.narSetPerms effs target (p { Directory.executable = True })
@@ -252,7 +280,7 @@ parseFile = do
 --   handles for target files longer than needed
 parseDirectory :: (IO.MonadIO m, Fail.MonadFail m) => NarParser m ()
 parseDirectory = do
-  createDirectory <- asks Nar.narCreateDir
+  createDirectory <- getNarEffect Nar.narCreateDir
   target          <- currentFile
   lift $ createDirectory target
   parseEntryOrFinish
@@ -272,9 +300,14 @@ parseDirectory = do
 
   parseEntry :: (IO.MonadIO m, Fail.MonadFail m) => NarParser m ()
   parseEntry = do
+    opts <- getNarOptions
     parens $ do
       expectStr "name"
-      fName <- addCaseHack =<< parseStr
+      fName <-
+        if Nar.useCaseHack opts then
+          addCaseHack =<< parseStr
+        else
+          parseStr
       pushFileName (toString fName)
       expectStr "node"
       parens parseFSO
@@ -282,17 +315,13 @@ parseDirectory = do
     parseEntryOrFinish
 
   addCaseHack fName = do
-#ifdef darwin_HOST_OS
     recordFileName fName
     conflictCount <- getFileNameConflictCount fName
     pure $
       if conflictCount > 0 then
-        fName <> "~nix~case~hack~" <> show conflictCount
+        fName <> Nar.caseHackSuffix <> show conflictCount
       else
         fName
-#else
-    pure fName
-#endif
 
 
 
@@ -392,7 +421,7 @@ parens act = do
 --   (Targets must be created before the links that target them)
 createLinks :: IO.MonadIO m => NarParser m ()
 createLinks = do
-  createLink  <- asks Nar.narCreateLink
+  createLink  <- getNarEffect Nar.narCreateLink
   allLinks    <- State.gets links
   sortedLinks <- IO.liftIO $ sortLinksIO allLinks
   forM_ sortedLinks $ \li -> do
