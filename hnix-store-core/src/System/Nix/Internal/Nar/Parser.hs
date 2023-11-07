@@ -1,5 +1,6 @@
 -- | A streaming parser for the NAR format
 
+{-# language CPP                        #-}
 {-# language GeneralizedNewtypeDeriving #-}
 {-# language ScopedTypeVariables        #-}
 {-# language TypeFamilies               #-}
@@ -25,6 +26,7 @@ import qualified Control.Monad.State             as State
 import qualified Control.Monad.Trans             as Trans
 import qualified Control.Monad.Trans.Control     as Base
 import qualified Data.ByteString                 as Bytes
+import qualified Data.HashMap.Strict             as HashMap
 import qualified Data.List                       as List
 import qualified Data.Map                        as Map
 import qualified Data.Serialize                  as Serialize
@@ -91,6 +93,7 @@ runParser effs (NarParser action) h target = do
       , handle         = h
       , directoryStack = [target]
       , links          = []
+      , fileNames      = HashMap.empty
       }
 
   exceptionHandler :: Exception.Lifted.SomeException -> m (Either String a)
@@ -125,6 +128,9 @@ data ParserState = ParserState
   , links          :: [LinkInfo]
     -- ^ Unlike with files and directories, we collect symlinks
     --   from the NAR on
+  , fileNames      :: HashMap.HashMap Text Int
+    -- ^ A case-insensitive map of files names to the number of collisions encountered.
+    -- Used to avoid collisions on case-insensitive file systems, ie. macOS.
   }
 
 
@@ -267,12 +273,26 @@ parseDirectory = do
   parseEntry = do
     parens $ do
       expectStr "name"
-      fName <- parseStr
+      fName <- addCaseHack =<< parseStr
       pushFileName (toString fName)
       expectStr "node"
       parens parseFSO
       popFileName
     parseEntryOrFinish
+
+  addCaseHack fName = do
+  #ifdef darwin_HOST_OS
+    let key = Text.toLower fName
+    recordFileName key
+    conflictCount <- getFileNameConflictCount key
+    pure $
+      if conflictCount > 0 then
+        fName <> "~nix~case~hack~" <> show numConflicts
+      else
+        fName
+  #else
+    pure fName
+  #endif
 
 
 
@@ -471,6 +491,16 @@ currentFile = do
 pushLink :: Monad m => LinkInfo -> NarParser m ()
 pushLink linkInfo = State.modify (\s -> s { links = linkInfo : links s })
 
+
+-- | Add a file name to the collection of encountered file names
+recordFileName :: Monad m => Text -> NarParser m ()
+recordFileName fName =
+  State.modify (\s -> s { fileNames = HashMap.insertWith (+) fName 0 (fileNames s) })
+
+getFileNameConflictCount :: Monad m => Text -> NarParser m Int
+getFileNameConflictCount fName = do
+  fileMap <- State.gets fileNames
+  pure $ HashMap.findWithDefault 0 fName fileMap
 
 ------------------------------------------------------------------------------
 -- * Utilities
